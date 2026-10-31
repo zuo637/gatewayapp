@@ -35,5 +35,5 @@ dependencies {
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
     implementation 'androidx.webkit:webkit:1.8.0'
-    python 'com.chaquo.python:python:3.11'
+    pythonImplementation 'com.chaquo.python:python:3.11'
 }
