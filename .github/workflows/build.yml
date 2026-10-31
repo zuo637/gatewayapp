@@ -33,6 +33,7 @@ jobs:
 
       - name: Install 32-bit libraries (for aapt2 on Ubuntu 26.04)
         run: |
+          sudo dpkg --add-architecture i386
           sudo apt-get update -qq
           sudo apt-get install -y -qq libc6:i386 libstdc++6:i386 libncurses6:i386 libz1:i386
 
