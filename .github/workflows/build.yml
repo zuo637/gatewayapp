@@ -1,6 +1,6 @@
 name: Build APK
 
-"on":
+'on':
   push:
     branches: [ main, master ]
   workflow_dispatch:
@@ -25,13 +25,12 @@ jobs:
           java-version: 17
           cache: gradle
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: |
-            platforms;android-34
-            build-tools;34.0.0
-          accept-android-sdk-licenses: true
+      - name: Install Android SDK
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y android-sdk
+          echo 'y' | ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager --licenses
+          ${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
 
       - name: Make gradlew executable
         run: chmod +x ./gradlew
