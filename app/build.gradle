@@ -15,7 +15,7 @@ android {
             abiFilters 'arm64-v8a', 'armeabi-v7a'
         }
         python {
-            buildPython '3.11'
+            buildPython 'python3.11'
             pip {
                 install 'requests'
             }
