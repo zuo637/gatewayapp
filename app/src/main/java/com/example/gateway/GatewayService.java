@@ -15,9 +15,11 @@ import android.util.Log;
 import com.chaquo.python.Python;
 import com.chaquo.python.PyObject;
 import org.json.JSONObject;
+import org.json.JSONArray;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+
 public class GatewayService extends Service {
     public class LocalBinder extends android.os.Binder {
         public GatewayService getService() {
@@ -40,7 +42,7 @@ public class GatewayService extends Service {
     private SharedPreferences prefs;
     private NotificationManager notificationManager;
     private JsBridge jsBridge;
-
+    
     @Override
     public void onCreate() {
         super.onCreate();
@@ -49,7 +51,6 @@ public class GatewayService extends Service {
         createNotificationChannel();
         jsBridge = new JsBridge(this);
         extractPythonScript();
-        // 不再在 onCreate 里强制启动 Python，改为按需
     }
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -80,7 +81,6 @@ public class GatewayService extends Service {
         }
     }
     private boolean initPython() {
-        // 调用 Application 的懒加载启动
         if (!GatewayApplication.ensurePythonStarted(this)) {
             Log.e(TAG, "Python failed to start: " + GatewayApplication.getPythonStartError());
             return false;
@@ -96,9 +96,9 @@ public class GatewayService extends Service {
     }
     private void startGatewayInternal() {
         if (running) return;
-        // 启动前确保 Python 就绪
         if (!initPython()) {
             Log.e(TAG, "Cannot start gateway: Python unavailable");
+            running = false;
             return;
         }
         running = true;
@@ -147,16 +147,33 @@ public class GatewayService extends Service {
     }
     public void saveConfig(String json) {
         prefs.edit().putString("config", json).apply();
+        Log.i(TAG, "Config saved: " + json);
         if (running) reloadConfig();
     }
     public String getStatusJson() {
         try {
             JSONObject obj = new JSONObject();
             obj.put("running", running);
-            obj.put("port", 8128);
+            obj.put("port", prefs.getInt("port", 8128));
+            
+            // 如果网关实例存在，获取完整状态（providers、健康、模型等）
+            if (gatewayInstance != null) {
+                try {
+                    String pyStatus = gatewayInstance.callAttr("get_status").toString();
+                    JSONObject pyObj = new JSONObject(pyStatus);
+                    obj.put("providers", pyObj.getJSONArray("providers"));
+                    obj.put("master_key", pyObj.optString("master_key", ""));
+                } catch (Exception e) {
+                    Log.w(TAG, "Get python status failed", e);
+                    obj.put("providers", new JSONArray());
+                }
+            } else {
+                obj.put("providers", new JSONArray());
+            }
             return obj.toString();
         } catch (Exception e) {
-            return "{\"running\":false}";
+            Log.e(TAG, "getStatusJson error", e);
+            return "{\"running\":false,\"providers\":[]}";
         }
     }
     public String getLogsJson() {
