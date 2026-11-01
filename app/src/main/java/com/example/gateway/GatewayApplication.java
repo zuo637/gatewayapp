@@ -68,7 +68,7 @@ public class GatewayApplication extends Application {
         });
     }
 
-    private void writeCrashLog(Context context, Throwable ex) {
+    private static void writeCrashLog(Context context, Throwable ex) {
         try {
             // 写到 getExternalFilesDir —— 文件管理器能进 /sdcard/Android/data/包名/files/
             // 完全免权限、免授权、Android 11+ 也可见
