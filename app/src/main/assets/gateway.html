@@ -3,21 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>API 网关管理</title>
+    <title>AI 模型网关</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; padding: 16px; }
-        .container { max-width: 600px; margin: 0 auto; }
+        .container { max-width: 700px; margin: 0 auto; }
         .card { background: white; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-        .card-title { font-size: 18px; font-weight: 600; margin-bottom: 16px; color: #1a1a1a; }
+        .card-title { font-size: 18px; font-weight: 600; margin-bottom: 16px; color: #1a1a1a; display: flex; justify-content: space-between; align-items: center; }
         .form-group { margin-bottom: 16px; }
         label { display: block; font-size: 14px; color: #666; margin-bottom: 8px; }
-        input, textarea { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; }
-        input:focus, textarea:focus { outline: none; border-color: #6200EE; }
+        input, textarea, select { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; }
+        input:focus, textarea:focus, select:focus { outline: none; border-color: #6200EE; }
         .btn { width: 100%; padding: 14px; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; }
         .btn-primary { background: #6200EE; color: white; }
         .btn-primary:disabled { background: #ccc; }
         .btn-danger { background: #fff; color: #D32F2F; border: 1px solid #D32F2F; }
+        .btn-secondary { background: #eee; color: #333; }
         .status { padding: 12px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
         .status.running { background: #E8F5E9; color: #2E7D32; }
         .status.stopped { background: #FFEBEE; color: #C62828; }
@@ -28,44 +29,69 @@
         .log-status.err { color: #C62828; }
         .row { display: flex; gap: 12px; }
         .row .form-group { flex: 1; }
+        .crash-log { background: #1e1e1e; color: #d4d4d4; border-radius: 8px; padding: 12px; font-family: monospace; font-size: 11px; white-space: pre-wrap; max-height: 400px; overflow-y: auto; }
+        .provider-item { background: #fafafa; border: 1px solid #eee; border-radius: 8px; padding: 16px; margin-bottom: 12px; position: relative; }
+        .provider-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+        .provider-name { font-weight: 600; font-size: 16px; }
+        .provider-badge { font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+        .badge-healthy { background: #E8F5E9; color: #2E7D32; }
+        .badge-unhealthy { background: #FFEBEE; color: #C62828; }
+        .provider-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        @media (max-width: 500px) { .provider-fields { grid-template-columns: 1fr; } }
+        .add-provider-btn { width: 100%; margin-top: 8px; }
+        .models-input { font-size: 12px; color: #666; }
+        .models-input small { color: #999; }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="card">
-            <div class="card-title">API 网关状态</div>
+            <div class="card-title">AI 模型网关状态</div>
             <div id="status" class="status stopped">服务未运行</div>
             <button id="btnStart" class="btn btn-primary" onclick="startGateway()">启动网关</button>
             <button id="btnStop" class="btn btn-danger" style="margin-top:8px;display:none" onclick="stopGateway()">停止网关</button>
         </div>
-
+        
         <div class="card">
-            <div class="card-title">配置</div>
+            <div class="card-title">基础配置</div>
             <div class="form-group">
                 <label>监听端口</label>
                 <input type="number" id="configPort" value="8128" min="1" max="65535">
             </div>
             <div class="form-group">
-                <label>主密钥</label>
+                <label>主密钥（客户端请求 Header: Authorization: Bearer xxx）</label>
                 <input type="text" id="configMasterKey" value="gateway-master-2024">
             </div>
-            <div class="form-group">
-                <label>上游服务（每行一个，支持多个轮询）</label>
-                <textarea id="configUpstreams" rows="3" placeholder="http://api1.example.com&#10;http://api2.example.com"></textarea>
-            </div>
+        </div>
+        
+        <div class="card">
+            <div class="card-title">上游提供商（每个提供商 = 一个 API 服务商）</div>
+            <div id="providersContainer"></div>
+            <button class="btn btn-secondary add-provider-btn" onclick="addProvider()">+ 添加提供商</button>
+        </div>
+        
+        <div class="card">
+            <div class="card-title">操作</div>
             <button class="btn btn-primary" onclick="saveConfig()">保存配置</button>
         </div>
-
+        
         <div class="card">
             <div class="card-title">请求日志</div>
             <button class="btn" style="background:#eee;color:#333;margin-bottom:12px" onclick="loadLogs()">刷新日志</button>
             <div id="logs"></div>
         </div>
+        
+        <div class="card">
+            <div class="card-title">崩溃日志（闪退自动记录）</div>
+            <button class="btn btn-secondary" onclick="loadCrashLog()">读取崩溃日志</button>
+            <button class="btn btn-primary" style="margin-top:8px" onclick="copyCrashLog()">复制到剪贴板 → 发给开发者</button>
+            <div id="crashLog" class="crash-log" style="margin-top:12px;display:none"></div>
+        </div>
     </div>
-
     <script>
         const bridge = window.AndroidBridge;
-
+        let providerCount = 0;
+        
         function updateStatusUI(running) {
             const status = document.getElementById('status');
             const btnStart = document.getElementById('btnStart');
@@ -82,36 +108,50 @@
                 btnStop.style.display = 'none';
             }
         }
-
+        
         function startGateway() {
             bridge.startGateway();
             setTimeout(loadStatus, 500);
         }
-
         function stopGateway() {
             bridge.stopGateway();
             setTimeout(loadStatus, 500);
         }
-
         function loadStatus() {
             try {
                 const res = JSON.parse(bridge.getStatus());
                 updateStatusUI(res.running);
+                // 同步提供商状态
+                if (res.providers) {
+                    renderProviders(res.providers);
+                }
             } catch (e) {
                 console.error(e);
             }
         }
-
+        
         function saveConfig() {
+            const providers = [];
+            document.querySelectorAll('.provider-item').forEach(item => {
+                const name = item.querySelector('.p-name').value.trim();
+                const base_url = item.querySelector('.p-base_url').value.trim();
+                const api_key = item.querySelector('.p-api_key').value.trim();
+                const models = item.querySelector('.p-models').value.trim().split(',').map(s => s.trim()).filter(s => s);
+                const weight = parseInt(item.querySelector('.p-weight').value) || 1;
+                if (name && base_url && api_key) {
+                    providers.push({ name, base_url, api_key, models, weight });
+                }
+            });
+            
             const config = {
                 port: parseInt(document.getElementById('configPort').value) || 8128,
                 master_key: document.getElementById('configMasterKey').value || 'gateway-master-2024',
-                upstreams: document.getElementById('configUpstreams').value.split('\n').map(s => s.trim()).filter(s => s)
+                providers: providers
             };
             bridge.saveConfig(JSON.stringify(config));
             alert('配置已保存，重启服务生效');
         }
-
+        
         function loadLogs() {
             try {
                 const logs = JSON.parse(bridge.getLogs());
@@ -125,6 +165,7 @@
                         <span class="log-time">${l.time}</span>
                         <span class="log-method">${l.method}</span>
                         ${l.path}
+                        ${l.provider ? '<span style="color:#6200EE">[' + l.provider + ']</span>' : ''}
                         <span class="log-status ${l.status >= 400 ? 'err' : 'ok'}">${l.status}</span>
                         ${l.ip}
                     </div>
@@ -133,10 +174,88 @@
                 console.error(e);
             }
         }
-
+        
+        function loadCrashLog() {
+            try {
+                const log = bridge.getCrashLog();
+                const container = document.getElementById('crashLog');
+                container.textContent = log;
+                container.style.display = 'block';
+            } catch (e) {
+                console.error(e);
+            }
+        }
+        function copyCrashLog() {
+            bridge.copyCrashLogToClipboard();
+            alert('已复制到剪贴板，直接粘贴发给开发者');
+        }
+        
+        // Provider UI
+        function addProvider(data = {}) {
+            providerCount++;
+            const id = providerCount;
+            const container = document.getElementById('providersContainer');
+            const div = document.createElement('div');
+            div.className = 'provider-item';
+            div.dataset.id = id;
+            div.innerHTML = `
+                <div class="provider-header">
+                    <span class="provider-name">提供商 #${id}</span>
+                    <span class="provider-badge badge-healthy">健康</span>
+                    <button class="btn" style="padding:6px 12px;font-size:12px;background:#fee;color:#c00;border:1px solid #fcc" onclick="removeProvider(${id})">删除</button>
+                </div>
+                <div class="provider-fields">
+                    <div class="form-group">
+                        <label>名称 *</label>
+                        <input type="text" class="p-name" placeholder="如: openai, deepseek, zhipu" value="${data.name || ''}">
+                    </div>
+                    <div class="form-group">
+                        <label>Base URL *</label>
+                        <input type="text" class="p-base_url" placeholder="https://api.openai.com" value="${data.base_url || ''}">
+                    </div>
+                    <div class="form-group">
+                        <label>API Key *</label>
+                        <input type="text" class="p-api_key" placeholder="sk-xxx" value="${data.api_key || ''}">
+                    </div>
+                    <div class="form-group">
+                        <label>权重</label>
+                        <input type="number" class="p-weight" value="${data.weight || 1}" min="1" max="100">
+                    </div>
+                    <div class="form-group" style="grid-column: 1 / -1;">
+                        <label>模型列表（留空=全部，逗号分隔）</label>
+                        <input type="text" class="p-models" placeholder="gpt-4o, gpt-4o-mini" value="${(data.models || []).join(', ')}">
+                        <small>例: gpt-4o, gpt-4o-mini, deepseek-chat</small>
+                    </div>
+                </div>
+            `;
+            container.appendChild(div);
+        }
+        
+        function removeProvider(id) {
+            document.querySelector(`.provider-item[data-id="${id}"]`)?.remove();
+        }
+        
+        function renderProviders(providers) {
+            const container = document.getElementById('providersContainer');
+            providers.forEach((p, i) => {
+                const item = container.querySelector(`.provider-item[data-id="${i+1}"]`);
+                if (item) {
+                    const badge = item.querySelector('.provider-badge');
+                    badge.textContent = p.healthy ? '健康' : '不可用';
+                    badge.className = 'provider-badge ' + (p.healthy ? 'badge-healthy' : 'badge-unhealthy');
+                    if (p.last_error) {
+                        badge.title = p.last_error;
+                    }
+                }
+            });
+        }
+        
         // 初始加载
         loadStatus();
         loadLogs();
+        // 默认加载 2 个提供商输入框
+        addProvider();
+        addProvider();
     </script>
 </body>
 </html>
