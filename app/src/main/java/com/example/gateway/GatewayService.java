@@ -50,7 +50,7 @@ public class GatewayService extends Service {
         notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         createNotificationChannel();
         jsBridge = new JsBridge(this);
-        extractPythonScript();
+        extractPythonScriptToExternal();
         Log.i(TAG, "Service onCreate done");
     }
     private void createNotificationChannel() {
@@ -61,12 +61,14 @@ public class GatewayService extends Service {
             notificationManager.createNotificationChannel(channel);
         }
     }
-    private void extractPythonScript() {
+    // 把 Python 脚本提取到「外部存储可见目录」，用户可用文件管理器直接编辑
+    private void extractPythonScriptToExternal() {
         try {
-            File destDir = new File(getFilesDir(), "python");
+            File destDir = new File(getExternalFilesDir(null), "python");
             if (!destDir.exists()) destDir.mkdirs();
             File destFile = new File(destDir, "gateway.py");
-            if (!destFile.exists()) {
+            boolean needCopy = !destFile.exists();
+            if (needCopy) {
                 InputStream is = getAssets().open("python/gateway.py");
                 FileOutputStream fos = new FileOutputStream(destFile);
                 byte[] buffer = new byte[8192];
@@ -82,6 +84,9 @@ public class GatewayService extends Service {
             Log.e(TAG, "Extract python script failed", e);
         }
     }
+    private File getPythonScriptFile() {
+        return new File(getExternalFilesDir(null), "python/gateway.py");
+    }
     private boolean initPython() {
         Log.i(TAG, "Initializing Python...");
         if (!GatewayApplication.ensurePythonStarted(this)) {
@@ -91,13 +96,29 @@ public class GatewayService extends Service {
         }
         try {
             py = Python.getInstance();
-            gatewayModule = py.getModule("gateway");
+            // 从外部文件加载模块（支持热重载）
+            File pyFile = getPythonScriptFile();
+            if (pyFile.exists()) {
+                gatewayModule = py.getModuleFromFile("gateway", pyFile.getAbsolutePath());
+                Log.i(TAG, "Python module loaded from " + pyFile.getAbsolutePath());
+            } else {
+                gatewayModule = py.getModule("gateway"); // fallback to assets
+                Log.w(TAG, "External script not found, fallback to assets");
+            }
             Log.i(TAG, "Python initialized successfully");
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Python init failed", e);
             return false;
         }
+    }
+    public void reloadPython() {
+        Log.i(TAG, "reloadPython() called from JS");
+        new Handler(Looper.getMainLooper()).post(() -> {
+            if (running) stopGatewayInternal();
+            initPython();
+            startGatewayInternal();
+        });
     }
     private void startGatewayInternal() {
         if (running) {
@@ -108,7 +129,6 @@ public class GatewayService extends Service {
         if (!initPython()) {
             Log.e(TAG, "Cannot start gateway: Python unavailable");
             running = false;
-            notifyJsGatewayFailed("Python initialization failed");
             return;
         }
         running = true;
@@ -125,17 +145,12 @@ public class GatewayService extends Service {
                 }
             } catch (Exception e) {
                 Log.e(TAG, "Gateway runtime error", e);
-                notifyJsGatewayFailed("Runtime error: " + e.getMessage());
             } finally {
                 running = false;
             }
         });
         gatewayThread.start();
         showNotification("API 网关运行中", "点击打开管理页面");
-    }
-    private void notifyJsGatewayFailed(String error) {
-        // 通过 JsBridge 无法直接推送，但会在 getStatusJson 里体现 running=false
-        Log.e(TAG, "Gateway failed: " + error);
     }
     private void stopGatewayInternal() {
         if (!running) return;
@@ -173,7 +188,6 @@ public class GatewayService extends Service {
     public void saveConfig(String json) {
         prefs.edit().putString("config", json).apply();
         Log.i(TAG, "Config saved: " + json);
-        // 无论 running 与否，保存后都尝试启动网关
         reloadConfig();
     }
     public String getStatusJson() {
@@ -181,7 +195,6 @@ public class GatewayService extends Service {
             JSONObject obj = new JSONObject();
             obj.put("running", running);
             obj.put("port", prefs.getInt("port", 8128));
-            
             if (gatewayInstance != null) {
                 try {
                     String pyStatus = gatewayInstance.callAttr("get_status").toString();
