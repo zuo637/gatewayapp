@@ -18,7 +18,20 @@ public class JsBridge {
     }
     @JavascriptInterface
     public String getStatus() {
-        return service != null ? service.getStatusJson() : "{\"running\":false}";
+        if (service == null) return "{\"running\":false}";
+        try {
+            org.json.JSONObject obj = new org.json.JSONObject(service.getStatusJson());
+            // 附加 Python 状态
+            obj.put("pythonStarted", com.example.gateway.GatewayApplication.isPythonStarted());
+            obj.put("pythonStartFailed", com.example.gateway.GatewayApplication.isPythonStartFailed());
+            if (com.example.gateway.GatewayApplication.isPythonStartFailed()) {
+                Throwable err = com.example.gateway.GatewayApplication.getPythonStartError();
+                obj.put("pythonError", err != null ? err.getMessage() : "unknown");
+            }
+            return obj.toString();
+        } catch (Exception e) {
+            return service.getStatusJson();
+        }
     }
     @JavascriptInterface
     public void startGateway() {
@@ -43,7 +56,11 @@ public class JsBridge {
     @JavascriptInterface
     public String getCrashLog() {
         try {
-            File logFile = new File(context.getFilesDir(), "gateway_crash.txt");
+            File logFile = new File(context.getExternalFilesDir(null), "gateway_crash.txt");
+            if (!logFile.exists()) {
+                // 兜底尝试内部存储
+                logFile = new File(context.getFilesDir(), "gateway_crash.txt");
+            }
             if (!logFile.exists()) return "(no crash log yet)";
             StringBuilder sb = new StringBuilder();
             try (BufferedReader br = new BufferedReader(new InputStreamReader(new FileInputStream(logFile)))) {
