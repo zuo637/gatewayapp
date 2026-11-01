@@ -40,7 +40,8 @@ public class GatewayApplication extends Application {
     }
     private void writeCrashLog(Throwable ex) {
         try {
-            File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOAD);
+            // 用 DIRECTORY_DOWNLOADS (复数，API 8+) 兼容 minSdk 24
+            File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
             if (!dir.exists()) dir.mkdirs();
             File logFile = new File(dir, "gateway_crash.txt");
             try (FileWriter fw = new FileWriter(logFile, true);
