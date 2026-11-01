@@ -278,7 +278,11 @@ public class GatewayService extends Service {
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build();
-        startForeground(NOTIFICATION_ID, notification);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+        } else {
+            startForeground(NOTIFICATION_ID, notification);
+        }
     }
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
