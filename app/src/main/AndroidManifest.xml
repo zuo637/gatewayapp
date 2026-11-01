@@ -6,7 +6,6 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <application
         android:name=".GatewayApplication"
         android:allowBackup="true"
@@ -14,6 +13,13 @@
         android:label="@string/app_name"
         android:requestLegacyExternalStorage="true"
         android:theme="@style/Theme.GatewayApp">
+        
+        <!-- 极早初始化崩溃捕获，比 Application 更早 -->
+        <provider
+            android:name=".CrashInitProvider"
+            android:authorities="com.example.gateway.crashinit"
+            android:exported="false"
+            android:initOrder="100" />
         
         <activity
             android:name=".MainActivity"
