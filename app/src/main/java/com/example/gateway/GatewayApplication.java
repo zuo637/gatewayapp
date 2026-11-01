@@ -23,14 +23,12 @@ public class GatewayApplication extends Application {
     protected void attachBaseContext(Context base) {
         super.attachBaseContext(base);
         // 安装全局崩溃处理器（最早）
-        installCrashHandler();
-        // 不再在这里启动 Python，改为懒加载
+        installCrashHandler(base);
     }
 
     @Override
     public void onCreate() {
         super.onCreate();
-        // 也不在这里启动，改为按需启动
     }
 
     /** 懒加载启动 Python，供 Service / Bridge 调用 */
@@ -57,12 +55,12 @@ public class GatewayApplication extends Application {
     public static boolean isPythonStartFailed() { return pythonStartFailed; }
     public static Throwable getPythonStartError() { return pythonStartError; }
 
-    private void installCrashHandler() {
+    private void installCrashHandler(Context context) {
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
             private final Thread.UncaughtExceptionHandler defaultHandler = Thread.getDefaultUncaughtExceptionHandler();
             @Override
             public void uncaughtException(Thread thread, Throwable ex) {
-                writeCrashLog(getApplicationContext(), ex);
+                writeCrashLog(context, ex);
                 if (defaultHandler != null) {
                     defaultHandler.uncaughtException(thread, ex);
                 }
