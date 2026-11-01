@@ -12,6 +12,7 @@
         .card-title { font-size: 18px; font-weight: 600; margin-bottom: 16px; color: #1a1a1a; display: flex; justify-content: space-between; align-items: center; }
         .form-group { margin-bottom: 16px; }
         label { display: block; font-size: 14px; color: #666; margin-bottom: 8px; }
+        label .optional { color: #999; font-weight: 400; font-size: 12px; margin-left: 4px; }
         input, textarea, select { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; }
         input:focus, textarea:focus, select:focus { outline: none; border-color: #6200EE; }
         .btn { width: 100%; padding: 14px; border: none; border-radius: 8px; font-size: 16px; font-weight: 600; cursor: pointer; }
@@ -27,9 +28,6 @@
         .log-method { color: #6200EE; font-weight: bold; }
         .log-status.ok { color: #2E7D32; }
         .log-status.err { color: #C62828; }
-        .row { display: flex; gap: 12px; }
-        .row .form-group { flex: 1; }
-        .crash-log { background: #1e1e1e; color: #d4d4d4; border-radius: 8px; padding: 12px; font-family: monospace; font-size: 11px; white-space: pre-wrap; max-height: 400px; overflow-y: auto; }
         .provider-item { background: #fafafa; border: 1px solid #eee; border-radius: 8px; padding: 16px; margin-bottom: 12px; position: relative; }
         .provider-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
         .provider-name { font-weight: 600; font-size: 16px; }
@@ -39,7 +37,6 @@
         .provider-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
         @media (max-width: 500px) { .provider-fields { grid-template-columns: 1fr; } }
         .add-provider-btn { width: 100%; margin-top: 8px; }
-        .models-input { font-size: 12px; color: #666; }
         .models-input small { color: #999; }
     </style>
 </head>
@@ -59,20 +56,20 @@
                 <input type="number" id="configPort" value="8128" min="1" max="65535">
             </div>
             <div class="form-group">
-                <label>主密钥（客户端请求 Header: Authorization: Bearer xxx）</label>
+                <label>主密钥 <span class="optional">(客户端 Header: Authorization: Bearer xxx)</span></label>
                 <input type="text" id="configMasterKey" value="gateway-master-2024">
             </div>
         </div>
         
         <div class="card">
-            <div class="card-title">上游提供商（每个提供商 = 一个 API 服务商）</div>
+            <div class="card-title">上游提供商（想加多少加多少，名称选填、模型默认 auto）</div>
             <div id="providersContainer"></div>
             <button class="btn btn-secondary add-provider-btn" onclick="addProvider()">+ 添加提供商</button>
         </div>
         
         <div class="card">
             <div class="card-title">操作</div>
-            <button class="btn btn-primary" onclick="saveConfig()">保存配置</button>
+            <button class="btn btn-primary" onclick="saveConfig()">保存配置并重启</button>
         </div>
         
         <div class="card">
@@ -109,25 +106,14 @@
             }
         }
         
-        function startGateway() {
-            bridge.startGateway();
-            setTimeout(loadStatus, 500);
-        }
-        function stopGateway() {
-            bridge.stopGateway();
-            setTimeout(loadStatus, 500);
-        }
+        function startGateway() { bridge.startGateway(); setTimeout(loadStatus, 500); }
+        function stopGateway() { bridge.stopGateway(); setTimeout(loadStatus, 500); }
         function loadStatus() {
             try {
                 const res = JSON.parse(bridge.getStatus());
                 updateStatusUI(res.running);
-                // 同步提供商状态
-                if (res.providers) {
-                    renderProviders(res.providers);
-                }
-            } catch (e) {
-                console.error(e);
-            }
+                if (res.providers) renderProviders(res.providers);
+            } catch (e) { console.error(e); }
         }
         
         function saveConfig() {
@@ -138,28 +124,25 @@
                 const api_key = item.querySelector('.p-api_key').value.trim();
                 const models = item.querySelector('.p-models').value.trim().split(',').map(s => s.trim()).filter(s => s);
                 const weight = parseInt(item.querySelector('.p-weight').value) || 1;
-                if (name && base_url && api_key) {
+                if (base_url && api_key) {
                     providers.push({ name, base_url, api_key, models, weight });
                 }
             });
-            
             const config = {
                 port: parseInt(document.getElementById('configPort').value) || 8128,
                 master_key: document.getElementById('configMasterKey').value || 'gateway-master-2024',
                 providers: providers
             };
             bridge.saveConfig(JSON.stringify(config));
-            alert('配置已保存，重启服务生效');
+            alert('配置已保存，正在重启网关...');
+            setTimeout(() => { bridge.startGateway(); loadStatus(); }, 1000);
         }
         
         function loadLogs() {
             try {
                 const logs = JSON.parse(bridge.getLogs());
                 const container = document.getElementById('logs');
-                if (!logs.length) {
-                    container.innerHTML = '<div style="color:#999;text-align:center;padding:20px">暂无日志</div>';
-                    return;
-                }
+                if (!logs.length) { container.innerHTML = '<div style="color:#999;text-align:center;padding:20px">暂无日志</div>'; return; }
                 container.innerHTML = logs.slice(-50).reverse().map(l => `
                     <div class="log-entry">
                         <span class="log-time">${l.time}</span>
@@ -170,27 +153,14 @@
                         ${l.ip}
                     </div>
                 `).join('');
-            } catch (e) {
-                console.error(e);
-            }
+            } catch (e) { console.error(e); }
         }
         
         function loadCrashLog() {
-            try {
-                const log = bridge.getCrashLog();
-                const container = document.getElementById('crashLog');
-                container.textContent = log;
-                container.style.display = 'block';
-            } catch (e) {
-                console.error(e);
-            }
+            try { const log = bridge.getCrashLog(); const c = document.getElementById('crashLog'); c.textContent = log; c.style.display = 'block'; } catch (e) { console.error(e); }
         }
-        function copyCrashLog() {
-            bridge.copyCrashLogToClipboard();
-            alert('已复制到剪贴板，直接粘贴发给开发者');
-        }
+        function copyCrashLog() { bridge.copyCrashLogToClipboard(); alert('已复制到剪贴板，直接粘贴发给开发者'); }
         
-        // Provider UI
         function addProvider(data = {}) {
             providerCount++;
             const id = providerCount;
@@ -198,16 +168,17 @@
             const div = document.createElement('div');
             div.className = 'provider-item';
             div.dataset.id = id;
+            const autoName = data.base_url ? extractNameFromUrl(data.base_url) : '';
             div.innerHTML = `
                 <div class="provider-header">
-                    <span class="provider-name">提供商 #${id}</span>
+                    <span class="provider-name">提供商 #${id} ${data.name ? '(' + data.name + ')' : ''}</span>
                     <span class="provider-badge badge-healthy">健康</span>
                     <button class="btn" style="padding:6px 12px;font-size:12px;background:#fee;color:#c00;border:1px solid #fcc" onclick="removeProvider(${id})">删除</button>
                 </div>
                 <div class="provider-fields">
                     <div class="form-group">
-                        <label>名称 *</label>
-                        <input type="text" class="p-name" placeholder="如: openai, deepseek, zhipu" value="${data.name || ''}">
+                        <label>名称 <span class="optional">(留空自动从域名生成)</span></label>
+                        <input type="text" class="p-name" placeholder="${autoName || '如: openai'}" value="${data.name || ''}">
                     </div>
                     <div class="form-group">
                         <label>Base URL *</label>
@@ -222,7 +193,7 @@
                         <input type="number" class="p-weight" value="${data.weight || 1}" min="1" max="100">
                     </div>
                     <div class="form-group" style="grid-column: 1 / -1;">
-                        <label>模型列表（留空=全部，逗号分隔）</label>
+                        <label>模型列表 <span class="optional">(留空=全部，逗号分隔，客户端填 auto 或不填=自动选最优)</span></label>
                         <input type="text" class="p-models" placeholder="gpt-4o, gpt-4o-mini" value="${(data.models || []).join(', ')}">
                         <small>例: gpt-4o, gpt-4o-mini, deepseek-chat</small>
                     </div>
@@ -231,9 +202,15 @@
             container.appendChild(div);
         }
         
-        function removeProvider(id) {
-            document.querySelector(`.provider-item[data-id="${id}"]`)?.remove();
+        function extractNameFromUrl(url) {
+            try {
+                const m = url.match(/https?:\/\/([^\/]+)/);
+                if (m) { let h = m[1]; h = h.replace(/^(www\.|api\.)/, ''); return h.split('.')[0]; }
+            } catch(e) {}
+            return 'provider';
         }
+        
+        function removeProvider(id) { document.querySelector(`.provider-item[data-id="${id}"]`)?.remove(); }
         
         function renderProviders(providers) {
             const container = document.getElementById('providersContainer');
@@ -243,19 +220,15 @@
                     const badge = item.querySelector('.provider-badge');
                     badge.textContent = p.healthy ? '健康' : '不可用';
                     badge.className = 'provider-badge ' + (p.healthy ? 'badge-healthy' : 'badge-unhealthy');
-                    if (p.last_error) {
-                        badge.title = p.last_error;
-                    }
+                    if (p.last_error) badge.title = p.last_error;
+                    const nameEl = item.querySelector('.provider-name');
+                    nameEl.textContent = `提供商 #${i+1} ${p.name ? '(' + p.name + ')' : ''}`;
                 }
             });
         }
         
-        // 初始加载
-        loadStatus();
-        loadLogs();
-        // 默认加载 2 个提供商输入框
-        addProvider();
-        addProvider();
+        loadStatus(); loadLogs();
+        addProvider(); addProvider();
     </script>
 </body>
 </html>
