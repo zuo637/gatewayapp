@@ -52,6 +52,14 @@ public class GatewayService extends Service {
         createNotificationChannel();
         jsBridge = new JsBridge(this);
         syncPythonScript();
+            // 把内部 python 目录加入 sys.path，否则 getModule 找不到模块
+            try {
+                File internalDir = getInternalPythonFile().getParentFile();
+                py.getModule("sys").get("path").callAttr("append", internalDir.getAbsolutePath());
+                Log.i(TAG, "Added to sys.path: " + internalDir.getAbsolutePath());
+            } catch (Exception e) {
+                Log.w(TAG, "Add sys.path failed", e);
+            }
         Log.i(TAG, "Service onCreate done");
     }
     private void createNotificationChannel() {
@@ -121,6 +129,14 @@ public class GatewayService extends Service {
             py = Python.getInstance();
             // 同步外部脚本到内部，然后标准加载
             syncPythonScript();
+            // 把内部 python 目录加入 sys.path，否则 getModule 找不到模块
+            try {
+                File internalDir = getInternalPythonFile().getParentFile();
+                py.getModule("sys").get("path").callAttr("append", internalDir.getAbsolutePath());
+                Log.i(TAG, "Added to sys.path: " + internalDir.getAbsolutePath());
+            } catch (Exception e) {
+                Log.w(TAG, "Add sys.path failed", e);
+            }
             File internalFile = getInternalPythonFile();
             if (internalFile.exists()) {
                 // 从文件加载模块（Chaquopy 支持从文件路径加载）
