@@ -11,12 +11,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Gateway")
 
 def extract_name_from_url(base_url):
-    """从 base_url 自动提取名称：https://api.openai.com -> openai"""
     try:
         m = re.search(r'https?://([^/]+)', base_url)
         if m:
             host = m.group(1)
-            # 去掉 www. api. 等前缀，取第一段
             host = re.sub(r'^(www\.|api\.)', '', host)
             return host.split('.')[0]
     except:
@@ -24,15 +22,25 @@ def extract_name_from_url(base_url):
     return "provider"
 
 class Provider:
-    def __init__(self, name, base_url, api_key, models=None, weight=1):
+    def __init__(self, name, base_url, api_keys, models=None, weight=1):
         self.name = name or extract_name_from_url(base_url)
         self.base_url = base_url.rstrip('/')
-        self.api_key = api_key
+        # 支持多 key：按行分割，去空
+        self.api_keys = [k.strip() for k in api_keys.split('\n') if k.strip()] if isinstance(api_keys, str) else (api_keys or [])
+        self.key_index = 0
         self.models = models or []  # 空 = 全部可用
         self.weight = weight
         self.healthy = True
         self.last_error = None
         self.error_count = 0
+    
+    def get_next_key(self):
+        """轮询获取下一个 key"""
+        if not self.api_keys:
+            return None
+        key = self.api_keys[self.key_index % len(self.api_keys)]
+        self.key_index += 1
+        return key
     
     def matches_model(self, model):
         if not self.models:
@@ -71,16 +79,15 @@ class Gateway:
         providers_cfg = self.config.get("providers", [])
         for p in providers_cfg:
             self.providers.append(Provider(
-                name=p.get("name"),  # 可为空，自动生成
+                name=p.get("name"),
                 base_url=p.get("base_url", ""),
-                api_key=p.get("api_key", ""),
+                api_keys=p.get("api_keys", p.get("api_key", "")),  # 兼容旧字段
                 models=p.get("models", []),
                 weight=p.get("weight", 1)
             ))
         logger.info(f"Loaded {len(self.providers)} providers")
     
     def _select_provider(self, model=None):
-        """按权重随机选一个健康的、支持该模型的 provider"""
         candidates = [p for p in self.providers if p.healthy and p.matches_model(model)]
         if not candidates:
             candidates = [p for p in self.providers if p.healthy]
@@ -93,6 +100,29 @@ class Gateway:
             if r <= 0:
                 return p
         return candidates[-1]
+    
+    def fetch_models_for_provider(self, provider):
+        """自动拉取模型列表"""
+        try:
+            # 尝试第一个 key
+            for key in provider.api_keys:
+                resp = requests.get(f"{provider.base_url}/v1/models", 
+                    headers={'Authorization': f'Bearer {key}'}, timeout=10)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    models = [m.get('id') for m in data.get('data', []) if m.get('id')]
+                    if models:
+                        provider.models = models
+                        provider.mark_success()
+                        logger.info(f"Auto-fetched {len(models)} models for {provider.name}")
+                        return models
+                elif resp.status_code in (401, 403):
+                    continue  # 试下一个 key
+                else:
+                    break
+        except Exception as e:
+            logger.warning(f"Auto-fetch models failed for {provider.name}: {e}")
+        return None
     
     def run(self):
         if self.running:
@@ -123,6 +153,7 @@ class Gateway:
                     "name": p.name,
                     "base_url": p.base_url,
                     "models": p.models,
+                    "key_count": len(p.api_keys),
                     "healthy": p.healthy,
                     "error_count": p.error_count,
                     "last_error": p.last_error
@@ -146,7 +177,6 @@ class Gateway:
             
             def handle_request(self):
                 client_ip = self.client_address[0]
-                
                 content_length = int(self.headers.get('Content-Length', 0))
                 body = self.rfile.read(content_length) if content_length > 0 else b''
                 
@@ -185,9 +215,7 @@ class Gateway:
                 except:
                     model = 'auto'
                 
-                # model 为 auto/空/不填 -> 自动选最优
                 target_model = model if model and model != 'auto' else None
-                
                 provider = gateway._select_provider(target_model)
                 if not provider:
                     log_entry["status"] = 503
@@ -195,34 +223,47 @@ class Gateway:
                     return
                 
                 target_url = provider.base_url + '/v1/chat/completions'
-                headers = {
-                    'Authorization': f'Bearer {provider.api_key}',
-                    'Content-Type': 'application/json'
-                }
                 
-                if target_model:
-                    req['model'] = target_model
-                
-                try:
-                    resp = requests.post(target_url, headers=headers, json=req, timeout=60)
+                # 多 key 故障转移：最多尝试所有 key
+                last_error = None
+                for _ in range(len(provider.api_keys)):
+                    api_key = provider.get_next_key()
+                    headers = {
+                        'Authorization': f'Bearer {api_key}',
+                        'Content-Type': 'application/json'
+                    }
+                    if target_model:
+                        req['model'] = target_model
                     
-                    log_entry["provider"] = provider.name
-                    log_entry["status"] = resp.status_code
-                    
-                    if resp.status_code == 200:
-                        provider.mark_success()
-                        self.send_response(200)
-                        self.send_header('Content-Type', 'application/json')
-                        self.end_headers()
-                        self.wfile.write(resp.content)
-                    else:
-                        provider.mark_error(f"HTTP {resp.status_code}: {resp.text[:200]}")
-                        self._send_json(resp.status_code, resp.json() if resp.headers.get('content-type','').startswith('application/json') else {"error": resp.text}, log_entry)
+                    try:
+                        resp = requests.post(target_url, headers=headers, json=req, timeout=60)
+                        log_entry["provider"] = provider.name
+                        log_entry["status"] = resp.status_code
+                        
+                        if resp.status_code == 200:
+                            provider.mark_success()
+                            self.send_response(200)
+                            self.send_header('Content-Type', 'application/json')
+                            self.end_headers()
+                            self.wfile.write(resp.content)
+                            return
+                        elif resp.status_code in (401, 403, 429):
+                            # key 失效/限流，尝试下一个
+                            last_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                            provider.mark_error(last_error)
+                            continue
+                        else:
+                            provider.mark_error(f"HTTP {resp.status_code}: {resp.text[:200]}")
+                            self._send_json(resp.status_code, resp.json() if resp.headers.get('content-type','').startswith('application/json') else {"error": resp.text}, log_entry)
+                            return
+                    except Exception as e:
+                        last_error = str(e)
+                        provider.mark_error(e)
+                        continue
                 
-                except Exception as e:
-                    provider.mark_error(e)
-                    log_entry["status"] = 502
-                    self._send_json(502, {"error": "Bad gateway", "detail": str(e), "provider": provider.name}, log_entry)
+                # 所有 key 都失败
+                log_entry["status"] = 502
+                self._send_json(502, {"error": "Bad gateway", "detail": last_error or "All keys failed", "provider": provider.name}, log_entry)
             
             def _handle_models(self, log_entry):
                 all_models = []
@@ -230,21 +271,14 @@ class Gateway:
                 for p in gateway.providers:
                     if not p.healthy:
                         continue
-                    try:
-                        resp = requests.get(f"{p.base_url}/v1/models", 
-                            headers={'Authorization': f'Bearer {p.api_key}'}, timeout=10)
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            for m in data.get('data', []):
-                                mid = m.get('id')
-                                if mid and mid not in seen:
-                                    seen.add(mid)
-                                    all_models.append(m)
-                            p.mark_success()
-                        else:
-                            p.mark_error(f"models HTTP {resp.status_code}")
-                    except Exception as e:
-                        p.mark_error(e)
+                    # 自动拉取（如果模型列表为空）
+                    if not p.models:
+                        gateway.fetch_models_for_provider(p)
+                    for m in p.models:
+                        if m not in seen:
+                            seen.add(m)
+                            all_models.append({"id": m, "object": "model", "owned_by": p.name})
+                    p.mark_success()
                 
                 self._send_json(200, {"object": "list", "data": all_models}, log_entry)
             
@@ -268,8 +302,8 @@ if __name__ == "__main__":
         "port": 8128,
         "master_key": "gateway-master-2024",
         "providers": [
-            {"base_url": "https://api.openai.com", "api_key": "sk-xxx", "models": ["gpt-4o", "gpt-4o-mini"]},
-            {"base_url": "https://api.deepseek.com", "api_key": "sk-xxx", "models": ["deepseek-chat", "deepseek-coder"]}
+            {"base_url": "https://api.openai.com", "api_keys": "sk-xxx\nsk-yyy", "models": ["gpt-4o", "gpt-4o-mini"]},
+            {"base_url": "https://api.deepseek.com", "api_keys": "sk-xxx", "models": ["deepseek-chat", "deepseek-coder"]}
         ]
     }
     gw = Gateway(json.dumps(test_cfg))
