@@ -3,16 +3,29 @@ import logging
 import threading
 import time
 import random
+import re
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from urllib.parse import urlparse
 import requests
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Gateway")
 
+def extract_name_from_url(base_url):
+    """从 base_url 自动提取名称：https://api.openai.com -> openai"""
+    try:
+        m = re.search(r'https?://([^/]+)', base_url)
+        if m:
+            host = m.group(1)
+            # 去掉 www. api. 等前缀，取第一段
+            host = re.sub(r'^(www\.|api\.)', '', host)
+            return host.split('.')[0]
+    except:
+        pass
+    return "provider"
+
 class Provider:
     def __init__(self, name, base_url, api_key, models=None, weight=1):
-        self.name = name
+        self.name = name or extract_name_from_url(base_url)
         self.base_url = base_url.rstrip('/')
         self.api_key = api_key
         self.models = models or []  # 空 = 全部可用
@@ -58,7 +71,7 @@ class Gateway:
         providers_cfg = self.config.get("providers", [])
         for p in providers_cfg:
             self.providers.append(Provider(
-                name=p.get("name", "unknown"),
+                name=p.get("name"),  # 可为空，自动生成
                 base_url=p.get("base_url", ""),
                 api_key=p.get("api_key", ""),
                 models=p.get("models", []),
@@ -132,7 +145,6 @@ class Gateway:
                 self.end_headers()
             
             def handle_request(self):
-                start_time = time.time()
                 client_ip = self.client_address[0]
                 
                 content_length = int(self.headers.get('Content-Length', 0))
@@ -173,7 +185,10 @@ class Gateway:
                 except:
                     model = 'auto'
                 
-                provider = gateway._select_provider(model if model != 'auto' else None)
+                # model 为 auto/空/不填 -> 自动选最优
+                target_model = model if model and model != 'auto' else None
+                
+                provider = gateway._select_provider(target_model)
                 if not provider:
                     log_entry["status"] = 503
                     self._send_json(503, {"error": "No healthy provider available"}, log_entry)
@@ -185,8 +200,8 @@ class Gateway:
                     'Content-Type': 'application/json'
                 }
                 
-                if model != 'auto':
-                    req['model'] = model
+                if target_model:
+                    req['model'] = target_model
                 
                 try:
                     resp = requests.post(target_url, headers=headers, json=req, timeout=60)
@@ -253,8 +268,8 @@ if __name__ == "__main__":
         "port": 8128,
         "master_key": "gateway-master-2024",
         "providers": [
-            {"name": "openai", "base_url": "https://api.openai.com", "api_key": "sk-xxx", "models": ["gpt-4o", "gpt-4o-mini"]},
-            {"name": "deepseek", "base_url": "https://api.deepseek.com", "api_key": "sk-xxx", "models": ["deepseek-chat", "deepseek-coder"]}
+            {"base_url": "https://api.openai.com", "api_key": "sk-xxx", "models": ["gpt-4o", "gpt-4o-mini"]},
+            {"base_url": "https://api.deepseek.com", "api_key": "sk-xxx", "models": ["deepseek-chat", "deepseek-coder"]}
         ]
     }
     gw = Gateway(json.dumps(test_cfg))
