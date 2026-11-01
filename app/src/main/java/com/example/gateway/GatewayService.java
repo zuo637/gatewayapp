@@ -1,5 +1,4 @@
 package com.example.gateway;
-
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -13,16 +12,12 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
-
 import com.chaquo.python.Python;
 import com.chaquo.python.PyObject;
-
 import org.json.JSONObject;
-
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
-
 public class GatewayService extends Service {
     public class LocalBinder extends android.os.Binder {
         public GatewayService getService() {
@@ -30,7 +25,6 @@ public class GatewayService extends Service {
         }
     }
     private final IBinder binder = new LocalBinder();
-
     @Override
     public IBinder onBind(Intent intent) {
         return binder;
@@ -38,7 +32,6 @@ public class GatewayService extends Service {
     private static final String TAG = "GatewayService";
     private static final String CHANNEL_ID = "gateway_channel";
     private static final int NOTIFICATION_ID = 1001;
-
     private Python py;
     private PyObject gatewayModule;
     private PyObject gatewayInstance;
@@ -56,9 +49,8 @@ public class GatewayService extends Service {
         createNotificationChannel();
         jsBridge = new JsBridge(this);
         extractPythonScript();
-        initPython();
+        // 不再在 onCreate 里强制启动 Python，改为按需
     }
-
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
@@ -67,7 +59,6 @@ public class GatewayService extends Service {
             notificationManager.createNotificationChannel(channel);
         }
     }
-
     private void extractPythonScript() {
         try {
             File destDir = new File(getFilesDir(), "python");
@@ -88,28 +79,31 @@ public class GatewayService extends Service {
             Log.e(TAG, "Extract python script failed", e);
         }
     }
-
-    private void initPython() {
+    private boolean initPython() {
+        // 调用 Application 的懒加载启动
+        if (!GatewayApplication.ensurePythonStarted(this)) {
+            Log.e(TAG, "Python failed to start: " + GatewayApplication.getPythonStartError());
+            return false;
+        }
         try {
-            if (!Python.isStarted()) {
-                Python.start(new com.chaquo.python.android.AndroidPlatform(this));
-            }
             py = Python.getInstance();
             gatewayModule = py.getModule("gateway");
+            return true;
         } catch (Exception e) {
             Log.e(TAG, "Python init failed", e);
+            return false;
         }
     }
-
     private void startGatewayInternal() {
         if (running) return;
+        // 启动前确保 Python 就绪
+        if (!initPython()) {
+            Log.e(TAG, "Cannot start gateway: Python unavailable");
+            return;
+        }
         running = true;
-        
         gatewayThread = new Thread(() -> {
             try {
-                if (gatewayModule == null) {
-                    initPython();
-                }
                 if (gatewayModule != null) {
                     String configJson = prefs.getString("config", "{}");
                     gatewayInstance = gatewayModule.callAttr("Gateway", configJson);
@@ -122,10 +116,8 @@ public class GatewayService extends Service {
             }
         });
         gatewayThread.start();
-        
         showNotification("API 网关运行中", "点击打开管理页面");
     }
-
     private void stopGatewayInternal() {
         if (!running) return;
         running = false;
@@ -141,27 +133,22 @@ public class GatewayService extends Service {
         }
         notificationManager.cancel(NOTIFICATION_ID);
     }
-
     public void startGateway() {
         new Handler(Looper.getMainLooper()).post(this::startGatewayInternal);
     }
-
     public void stopGateway() {
         new Handler(Looper.getMainLooper()).post(this::stopGatewayInternal);
     }
-
     public void reloadConfig() {
         if (running) {
             stopGatewayInternal();
             startGatewayInternal();
         }
     }
-
     public void saveConfig(String json) {
         prefs.edit().putString("config", json).apply();
         if (running) reloadConfig();
     }
-
     public String getStatusJson() {
         try {
             JSONObject obj = new JSONObject();
@@ -172,7 +159,6 @@ public class GatewayService extends Service {
             return "{\"running\":false}";
         }
     }
-
     public String getLogsJson() {
         try {
             if (gatewayInstance != null) {
@@ -184,13 +170,11 @@ public class GatewayService extends Service {
         }
         return "[]";
     }
-
     private void showNotification(String title, String text) {
         Intent intent = new Intent(this, MainActivity.class);
         intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent pendingIntent = PendingIntent.getActivity(
             this, 0, intent, Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_IMMUTABLE : 0);
-        
         Notification notification = new Notification.Builder(this, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(text)
@@ -198,10 +182,8 @@ public class GatewayService extends Service {
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build();
-        
         startForeground(NOTIFICATION_ID, notification);
     }
-
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         if (intent != null && "AUTO_START".equals(intent.getAction())) {
@@ -209,13 +191,11 @@ public class GatewayService extends Service {
         }
         return START_STICKY;
     }
-
     @Override
     public void onDestroy() {
         stopGatewayInternal();
         super.onDestroy();
     }
-
     public JsBridge getJsBridge() {
         return jsBridge;
     }
