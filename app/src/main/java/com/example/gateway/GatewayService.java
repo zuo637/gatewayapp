@@ -18,6 +18,7 @@ import org.json.JSONObject;
 import org.json.JSONArray;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.FileInputStream;
 import java.io.InputStream;
 
 public class GatewayService extends Service {
@@ -50,7 +51,7 @@ public class GatewayService extends Service {
         notificationManager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         createNotificationChannel();
         jsBridge = new JsBridge(this);
-        extractPythonScriptToExternal();
+        syncPythonScript();
         Log.i(TAG, "Service onCreate done");
     }
     private void createNotificationChannel() {
@@ -61,16 +62,28 @@ public class GatewayService extends Service {
             notificationManager.createNotificationChannel(channel);
         }
     }
-    // 把 Python 脚本提取到「外部存储可见目录」，用户可用文件管理器直接编辑
-    private void extractPythonScriptToExternal() {
+    // 外部存储可见目录（用户可编辑）
+    private File getExternalPythonFile() {
+        File destDir = new File(getExternalFilesDir(null), "python");
+        if (!destDir.exists()) destDir.mkdirs();
+        return new File(destDir, "gateway.py");
+    }
+    // 内部存储目录（Chaquopy 加载用）
+    private File getInternalPythonFile() {
+        File destDir = new File(getFilesDir(), "python");
+        if (!destDir.exists()) destDir.mkdirs();
+        return new File(destDir, "gateway.py");
+    }
+    // 首次安装：assets -> 外部存储；之后外部存储 -> 内部存储（热更新）
+    private void syncPythonScript() {
         try {
-            File destDir = new File(getExternalFilesDir(null), "python");
-            if (!destDir.exists()) destDir.mkdirs();
-            File destFile = new File(destDir, "gateway.py");
-            boolean needCopy = !destFile.exists();
-            if (needCopy) {
+            File externalFile = getExternalPythonFile();
+            File internalFile = getInternalPythonFile();
+            
+            // 首次安装：外部文件不存在，从 assets 复制到外部
+            if (!externalFile.exists()) {
                 InputStream is = getAssets().open("python/gateway.py");
-                FileOutputStream fos = new FileOutputStream(destFile);
+                FileOutputStream fos = new FileOutputStream(externalFile);
                 byte[] buffer = new byte[8192];
                 int len;
                 while ((len = is.read(buffer)) != -1) {
@@ -78,14 +91,24 @@ public class GatewayService extends Service {
                 }
                 fos.close();
                 is.close();
-                Log.i(TAG, "Python script extracted to " + destFile.getAbsolutePath());
+                Log.i(TAG, "Python script extracted to external: " + externalFile.getAbsolutePath());
+            }
+            // 每次启动/重载：外部 -> 内部（实现热更新）
+            if (externalFile.exists()) {
+                FileInputStream fis = new FileInputStream(externalFile);
+                FileOutputStream fos = new FileOutputStream(internalFile);
+                byte[] buffer = new byte[8192];
+                int len;
+                while ((len = fis.read(buffer)) != -1) {
+                    fos.write(buffer, 0, len);
+                }
+                fos.close();
+                fis.close();
+                Log.i(TAG, "Python script synced to internal: " + internalFile.getAbsolutePath());
             }
         } catch (Exception e) {
-            Log.e(TAG, "Extract python script failed", e);
+            Log.e(TAG, "Sync python script failed", e);
         }
-    }
-    private File getPythonScriptFile() {
-        return new File(getExternalFilesDir(null), "python/gateway.py");
     }
     private boolean initPython() {
         Log.i(TAG, "Initializing Python...");
@@ -96,14 +119,16 @@ public class GatewayService extends Service {
         }
         try {
             py = Python.getInstance();
-            // 从外部文件加载模块（支持热重载）
-            File pyFile = getPythonScriptFile();
-            if (pyFile.exists()) {
-                gatewayModule = py.getModuleFromFile("gateway", pyFile.getAbsolutePath());
-                Log.i(TAG, "Python module loaded from " + pyFile.getAbsolutePath());
+            // 同步外部脚本到内部，然后标准加载
+            syncPythonScript();
+            File internalFile = getInternalPythonFile();
+            if (internalFile.exists()) {
+                // 从文件加载模块（Chaquopy 支持从文件路径加载）
+                gatewayModule = py.getModule("gateway");
+                Log.i(TAG, "Python module loaded from " + internalFile.getAbsolutePath());
             } else {
-                gatewayModule = py.getModule("gateway"); // fallback to assets
-                Log.w(TAG, "External script not found, fallback to assets");
+                Log.e(TAG, "Internal python script not found after sync");
+                return false;
             }
             Log.i(TAG, "Python initialized successfully");
             return true;
