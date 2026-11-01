@@ -1,7 +1,9 @@
 package com.example.gateway;
+
 import android.app.Application;
 import android.content.Context;
 import android.os.Environment;
+import android.util.Log;
 import com.chaquo.python.Python;
 import com.chaquo.python.android.AndroidPlatform;
 import java.io.File;
@@ -10,39 +12,72 @@ import java.io.PrintWriter;
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
+
 public class GatewayApplication extends Application {
+    private static final String TAG = "GatewayApplication";
+    private static volatile boolean pythonStarted = false;
+    private static volatile boolean pythonStartFailed = false;
+    private static Throwable pythonStartError = null;
+
     @Override
     protected void attachBaseContext(Context base) {
         super.attachBaseContext(base);
-        if (!Python.isStarted()) {
-            Python.start(new AndroidPlatform(this));
-        }
+        // 安装全局崩溃处理器（最早）
         installCrashHandler();
+        // 不再在这里启动 Python，改为懒加载
     }
+
     @Override
     public void onCreate() {
         super.onCreate();
-        if (!Python.isStarted()) {
-            Python.start(new AndroidPlatform(this));
+        // 也不在这里启动，改为按需启动
+    }
+
+    /** 懒加载启动 Python，供 Service / Bridge 调用 */
+    public static synchronized boolean ensurePythonStarted(Context context) {
+        if (pythonStarted) return true;
+        if (pythonStartFailed) return false;
+        try {
+            if (!Python.isStarted()) {
+                Python.start(new AndroidPlatform(context));
+            }
+            pythonStarted = true;
+            Log.i(TAG, "Python started successfully");
+            return true;
+        } catch (Throwable t) {
+            pythonStartFailed = true;
+            pythonStartError = t;
+            Log.e(TAG, "Python.start() failed", t);
+            writeCrashLog(context, new RuntimeException("Python initialization failed", t));
+            return false;
         }
     }
+
+    public static boolean isPythonStarted() { return pythonStarted; }
+    public static boolean isPythonStartFailed() { return pythonStartFailed; }
+    public static Throwable getPythonStartError() { return pythonStartError; }
+
     private void installCrashHandler() {
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
             private final Thread.UncaughtExceptionHandler defaultHandler = Thread.getDefaultUncaughtExceptionHandler();
             @Override
             public void uncaughtException(Thread thread, Throwable ex) {
-                writeCrashLog(ex);
+                writeCrashLog(getApplicationContext(), ex);
                 if (defaultHandler != null) {
                     defaultHandler.uncaughtException(thread, ex);
                 }
             }
         });
     }
-    private void writeCrashLog(Throwable ex) {
+
+    private void writeCrashLog(Context context, Throwable ex) {
         try {
-            // 用 DIRECTORY_DOWNLOADS (复数，API 8+) 兼容 minSdk 24
-            File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
-            if (!dir.exists()) dir.mkdirs();
+            // 写到 getExternalFilesDir —— 文件管理器能进 /sdcard/Android/data/包名/files/
+            // 完全免权限、免授权、Android 11+ 也可见
+            File dir = context.getExternalFilesDir(null);
+            if (dir == null) {
+                dir = context.getFilesDir(); // 兜底
+            }
             File logFile = new File(dir, "gateway_crash.txt");
             try (FileWriter fw = new FileWriter(logFile, true);
                  PrintWriter pw = new PrintWriter(fw)) {
@@ -50,6 +85,9 @@ public class GatewayApplication extends Application {
                 ex.printStackTrace(pw);
                 pw.println();
             }
-        } catch (Exception ignore) {}
+            Log.e(TAG, "Crash log written to: " + logFile.getAbsolutePath());
+        } catch (Exception e) {
+            Log.e(TAG, "Write crash log failed", e);
+        }
     }
 }
