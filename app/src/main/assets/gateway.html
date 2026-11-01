@@ -38,6 +38,7 @@
         @media (max-width: 500px) { .provider-fields { grid-template-columns: 1fr; } }
         .add-provider-btn { width: 100%; margin-top: 8px; }
         .models-input small { color: #999; }
+        .key-count { font-size: 12px; color: #666; margin-top: 4px; }
     </style>
 </head>
 <body>
@@ -62,7 +63,7 @@
         </div>
         
         <div class="card">
-            <div class="card-title">上游提供商（想加多少加多少，名称选填、模型默认 auto）</div>
+            <div class="card-title">上游提供商（想加多少加多少，名称选填、模型留空自动获取、Key 多行一个）</div>
             <div id="providersContainer"></div>
             <button class="btn btn-secondary add-provider-btn" onclick="addProvider()">+ 添加提供商</button>
         </div>
@@ -121,11 +122,11 @@
             document.querySelectorAll('.provider-item').forEach(item => {
                 const name = item.querySelector('.p-name').value.trim();
                 const base_url = item.querySelector('.p-base_url').value.trim();
-                const api_key = item.querySelector('.p-api_key').value.trim();
+                const api_keys = item.querySelector('.p-api_keys').value.trim();
                 const models = item.querySelector('.p-models').value.trim().split(',').map(s => s.trim()).filter(s => s);
                 const weight = parseInt(item.querySelector('.p-weight').value) || 1;
-                if (base_url && api_key) {
-                    providers.push({ name, base_url, api_key, models, weight });
+                if (base_url && api_keys) {
+                    providers.push({ name, base_url, api_keys, models, weight });
                 }
             });
             const config = {
@@ -184,16 +185,16 @@
                         <label>Base URL *</label>
                         <input type="text" class="p-base_url" placeholder="https://api.openai.com" value="${data.base_url || ''}">
                     </div>
-                    <div class="form-group">
-                        <label>API Key *</label>
-                        <input type="text" class="p-api_key" placeholder="sk-xxx" value="${data.api_key || ''}">
+                    <div class="form-group" style="grid-column: 1 / -1;">
+                        <label>API Key * <span class="optional">(每行一个，自动轮询故障转移)</span></label>
+                        <textarea class="p-api_keys" rows="3" placeholder="sk-xxxxxx\nsk-yyyyyy\nsk-zzzzzz">${data.api_keys || ''}</textarea>
                     </div>
                     <div class="form-group">
                         <label>权重</label>
                         <input type="number" class="p-weight" value="${data.weight || 1}" min="1" max="100">
                     </div>
                     <div class="form-group" style="grid-column: 1 / -1;">
-                        <label>模型列表 <span class="optional">(留空=全部，逗号分隔，客户端填 auto 或不填=自动选最优)</span></label>
+                        <label>模型列表 <span class="optional">(留空=自动获取，逗号分隔，客户端填 auto 或不填=自动选最优)</span></label>
                         <input type="text" class="p-models" placeholder="gpt-4o, gpt-4o-mini" value="${(data.models || []).join(', ')}">
                         <small>例: gpt-4o, gpt-4o-mini, deepseek-chat</small>
                     </div>
@@ -223,6 +224,13 @@
                     if (p.last_error) badge.title = p.last_error;
                     const nameEl = item.querySelector('.provider-name');
                     nameEl.textContent = `提供商 #${i+1} ${p.name ? '(' + p.name + ')' : ''}`;
+                    // 显示 key 数量
+                    const keyInfo = document.createElement('div');
+                    keyInfo.className = 'key-count';
+                    keyInfo.textContent = `Key 数量: ${p.key_count || 0} | 模型: ${p.models?.length || 0} 个`;
+                    const oldKeyInfo = item.querySelector('.key-count');
+                    if (oldKeyInfo) oldKeyInfo.remove();
+                    item.querySelector('.provider-header').appendChild(keyInfo);
                 }
             });
         }
